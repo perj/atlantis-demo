@@ -1,0 +1,68 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-init
+  namespace: minio
+spec:
+  template:
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Waiting for MinIO to be ready..."
+              until mc alias set myminio http://minio:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD; do
+                echo "Waiting for MinIO..."
+                sleep 5
+              done
+
+              echo "Creating terraform-states bucket..."
+              mc mb myminio/terraform-states --ignore-existing
+
+              echo "Enabling versioning..."
+              mc version enable myminio/terraform-states
+
+              echo "Setting bucket policy to allow read/write..."
+              cat > /tmp/policy.json << 'EOF'
+              {
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Effect": "Allow",
+                    "Principal": {"AWS": ["*"]},
+                    "Action": [
+                      "s3:GetObject",
+                      "s3:PutObject",
+                      "s3:DeleteObject"
+                    ],
+                    "Resource": ["arn:aws:s3:::terraform-states/*"]
+                  },
+                  {
+                    "Effect": "Allow",
+                    "Principal": {"AWS": ["*"]},
+                    "Action": ["s3:ListBucket"],
+                    "Resource": ["arn:aws:s3:::terraform-states"]
+                  }
+                ]
+              }
+              EOF
+              mc anonymous set-json /tmp/policy.json myminio/terraform-states
+
+              echo "MinIO initialization complete!"
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: rootUser
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: rootPassword
