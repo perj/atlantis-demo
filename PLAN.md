@@ -71,9 +71,10 @@ atlantis-demo/
 │   ├── 01-setup-kind.sh
 │   ├── 02-setup-gitlab.sh
 │   ├── 03-setup-minio.sh
-│   ├── 04-configure-gitlab.sh
-│   ├── 05-deploy-platform-atlantis.sh
-│   ├── 06-create-demo-repos.sh
+│   ├── 04-create-repo.sh
+│   ├── 05-configure-shared-resources.sh
+│   ├── 06-deploy-platform-atlantis.sh
+│   ├── 07-create-demo-repos.sh
 │   ├── cleanup.sh
 │   └── demo-workflow.sh
 ├── kind/
@@ -117,6 +118,9 @@ atlantis-demo/
 │   │       └── backend.tf
 │   └── shared/
 │       ├── main.tf
+│       ├── variables.tf
+│       ├── terraform.tfvars
+│       ├── backend.tf
 │       └── outputs.tf
 └── demo-repos/
     ├── system-alpha-infra/
@@ -153,7 +157,8 @@ atlantis-demo/
 
 2. Deploy ingress-nginx controller
 
-3. Configure local DNS entries in `/etc/hosts`
+3. Configure CoreDNS to resolve `*.127.0.0.1.nip.io` to the ingress controller ClusterIP
+   - Adds a `rewrite` rule to the CoreDNS ConfigMap so all pods in the cluster can reach ingress-backed services (MinIO, GitLab) without per-deployment `hostAliases`
 
 **Files to create:**
 - `kind/cluster-config.yaml`
@@ -257,79 +262,93 @@ terraform {
 
 **How this works:**
 - **From your laptop:** `minio.127.0.0.1.nip.io` resolves to `127.0.0.1` via nip.io DNS → hits ingress on localhost → routes to MinIO
-- **From Atlantis pods:** `hostAliases` (configured in deployment) makes `minio.127.0.0.1.nip.io` resolve to ingress controller ClusterIP → routes to MinIO
+- **From pods in the cluster:** CoreDNS rewrites `*.127.0.0.1.nip.io` queries to resolve to the ingress-nginx-controller ClusterIP (configured in Phase 1) → routes to MinIO via ingress
 
-This allows using a single backend configuration that works in both contexts.
+This allows using a single backend configuration that works in both contexts, with no per-deployment configuration needed.
 
 ---
 
-### Phase 4: GitLab Configuration
+### Phase 4: GitLab Repository Creation
 
-**Goal:** Configure GitLab with shared Atlantis user and Kubernetes namespace, then create platform repository
+**Goal:** Create the platform repository in GitLab and push initial content
 
-**Part A: Terraform-managed Shared Resources**
+**Tasks:**
 
-Create `atlantis-servers/shared/` Terraform configuration to manage:
-- **GitLab resources** via GitLab provider:
-  - Shared Atlantis service account user: `atlantis-bot`
-  - Admin privileges for webhook creation
-  - Personal access token with `api` scope
-- **Kubernetes resources** via Kubernetes provider:
-  - `atlantis` namespace (where all Atlantis servers will be deployed)
-  - Kubernetes secret in `atlantis` namespace containing GitLab credentials
+1. Use GitLab API to create `atlantis-demo` repository (top-level, no group)
 
-**Part B: GitLab Repository Creation**
+2. Push this local git repo to the new GitLab repository
 
-Use GitLab API directly (NOT Terraform) to:
-- Create GitLab repository `atlantis-demo` (top-level, no group)
-- Push initial content from this local git repo
+**Authentication:**
+- Uses GitLab root token from Phase 2
+- Set via environment variable: `export GITLAB_TOKEN=<root-token>`
+- Can be retrieved from Kubernetes secret created in Phase 2
 
-**Authentication Details:**
+**Files to create:**
+- `scripts/04-create-repo.sh` (creates repo via API and pushes content)
+
+**Script tasks:**
+```bash
+# 1. Get GitLab root token
+export GITLAB_TOKEN=$(kubectl get secret -n gitlab gitlab-root-token -o jsonpath='{.data.password}' | base64 -d)
+
+# 2. Create repo via API
+curl --request POST "http://gitlab.127.0.0.1.nip.io/api/v4/projects" \
+  --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "name": "atlantis-demo",
+    "visibility": "internal"
+  }'
+
+# 3. Push this repo
+git remote add gitlab http://root:${GITLAB_TOKEN}@gitlab.127.0.0.1.nip.io/root/atlantis-demo.git
+git push gitlab main
+```
+
+**Validation:**
+- `atlantis-demo` repository exists in GitLab
+- Repository contains all current files from local repo
+- Can access repository via GitLab UI
+
+**Note:** This repository IS the platform demo repo. In subsequent phases we'll add:
+- `atlantis-servers/shared/` - Terraform for shared resources
+- `atlantis-servers/environments/platform/` - Platform Atlantis infrastructure
+- `atlantis-servers/environments/system-*/` - System Atlantis infrastructure
+- `atlantis.yaml` at root - Configures Platform Atlantis workflow
+
+---
+
+### Phase 5: Shared Resources Configuration
+
+**Goal:** Create Terraform configuration for shared resources (GitLab user, Kubernetes namespace) and root atlantis.yaml
+
+**Tasks:**
+
+1. Create `atlantis-servers/shared/` Terraform configuration to manage:
+   - **Kubernetes resources** via Kubernetes provider:
+     - `atlantis` namespace (where all Atlantis servers will be deployed)
+     - Kubernetes secret in `atlantis` namespace containing GitLab credentials
+     - Used to fetch Gitlab root token for GitLab provider
+   - **GitLab resources** via GitLab provider:
+     - Shared Atlantis service account user: `atlantis-bot`
+     - Personal access token with `api` scope
+
+2. Create root `atlantis.yaml` defining project for `atlantis-servers/shared/`:
+   - This allows Platform Atlantis (once deployed) to manage shared resources via PRs
+   - For now, we'll apply manually, but later updates will go through Atlantis
+
+3. Apply Terraform configuration manually (bootstrap step)
+
+**Authentication:**
 
 1. **For Terraform (GitLab provider):**
    - Requires GitLab root token with admin privileges
-   - Set via environment variable: `export GITLAB_TOKEN=<root-token>`
-   - Token obtained from GitLab UI or during GitLab setup (Phase 2)
+   - Fetched from Kubernetes secret
    - Used to create `atlantis-bot` user and generate its token
 
 2. **For Terraform (Kubernetes provider):**
    - Uses local kubeconfig (already configured via kubectl)
    - Needs permissions to create namespaces and secrets
-
-3. **For GitLab API (repository creation):**
-   - Uses same root token as Terraform: `GITLAB_TOKEN`
-   - Makes direct API calls via curl/GitLab CLI
-   - Creates the `atlantis-demo` repository
-
-**Tasks:**
-
-1. Set GitLab root token as environment variable:
-   ```bash
-   export GITLAB_TOKEN=$(kubectl get secret -n gitlab gitlab-root-token -o jsonpath='{.data.password}' | base64 -d)
-   ```
-
-2. Apply Terraform configuration manually (bootstrap step):
-   ```bash
-   cd atlantis-servers/shared
-   terraform init
-   terraform apply
-   ```
-
-3. Use GitLab API to create repository and push content:
-   ```bash
-   # Create repo via API
-   curl --request POST "http://gitlab.127.0.0.1.nip.io/api/v4/projects" \
-     --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
-     --header "Content-Type: application/json" \
-     --data '{
-       "name": "atlantis-demo",
-       "visibility": "internal"
-     }'
-
-   # Push this repo
-   git remote add gitlab http://gitlab.127.0.0.1.nip.io/root/atlantis-demo.git
-   git push gitlab main
-   ```
 
 **Files to create:**
 - `atlantis-servers/shared/main.tf` (GitLab + Kubernetes resources)
@@ -337,20 +356,37 @@ Use GitLab API directly (NOT Terraform) to:
 - `atlantis-servers/shared/terraform.tfvars`
 - `atlantis-servers/shared/backend.tf` (MinIO backend config)
 - `atlantis-servers/shared/outputs.tf`
-- `scripts/04-configure-gitlab.sh` (runs Terraform, then creates repo via API)
+- `atlantis.yaml` (root level - includes project for shared resources)
+- `scripts/05-configure-shared-resources.sh` (runs Terraform apply)
+
+**Example atlantis.yaml structure:**
+```yaml
+version: 3
+projects:
+  - name: shared-resources
+    dir: atlantis-servers/shared
+    workspace: default
+    autoplan:
+      when_modified:
+        - "*.tf"
+        - "*.tfvars"
+      enabled: true
+```
+
+**Script tasks:**
+```bash
+# 1. Initialize and apply Terraform
+cd atlantis-servers/shared
+terraform init
+terraform apply
+```
 
 **Validation:**
 - Can authenticate as `atlantis-bot` in GitLab UI
-- `atlantis-demo` repository exists and is accessible
 - `atlantis` namespace exists in Kubernetes
 - GitLab token for `atlantis-bot` stored in Kubernetes secret in `atlantis` namespace
 - Terraform state for shared resources stored in MinIO
-
-**Note:** This repository IS the platform demo repo:
-- Will contain `atlantis-servers/environments/platform/` - Platform Atlantis infrastructure
-- Will contain `atlantis-servers/environments/system-*/` - System Atlantis infrastructure (managed by Platform Atlantis)
-- Will have `atlantis.yaml` at root (created in Phase 6) - Configures Platform Atlantis workflow
-- After Platform Atlantis is deployed, PRs to this repo will be managed by Platform Atlantis itself!
+- `atlantis.yaml` exists at root of repository
 
 **Why Terraform for shared resources:**
 - GitLab provider allows declarative management of users and tokens
@@ -359,15 +395,14 @@ Use GitLab API directly (NOT Terraform) to:
 - Demonstrates infrastructure-as-code from the beginning
 - Makes the setup reproducible and version-controlled
 
-**Why GitLab API for repository creation:**
-- Repository creation is a one-time bootstrap operation
-- Terraform GitLab provider can be complex for simple repo creation
-- Direct API call is straightforward and easier to understand
-- Separates concerns: Terraform manages persistent shared resources, API handles initial setup
+**Why create atlantis.yaml now:**
+- Once Platform Atlantis is deployed, it can manage updates to shared resources via PRs
+- Demonstrates that Platform Atlantis will manage its own infrastructure
+- Initial apply is manual (bootstrap), but subsequent changes go through Atlantis workflow
 
 ---
 
-### Phase 5: Atlantis Terraform Module
+### Phase 6: Atlantis Terraform Module
 
 **Goal:** Create reusable Terraform module for deploying Atlantis servers
 
@@ -379,19 +414,19 @@ Use GitLab API directly (NOT Terraform) to:
    - `gitlab_token_secret` - Reference to K8s secret with token
    - `webhook_secret` - Secret for webhook validation
    - `repo_allowlist` - List of repos this Atlantis can manage
-   - `atlantis_url` - External URL for this Atlantis instance
+   - `atlantis_host` - External host for this Atlantis instance
    - `namespace` - Kubernetes namespace where Atlantis runs (typically `atlantis`)
    - `target_namespaces` - List of namespaces this Atlantis can manage (for RBAC)
    - `resource_limits` - CPU/memory limits
    - `tf_backend_config` - MinIO/S3 backend configuration
 
 2. **Resources Created:**
-   - Kubernetes namespace (if not exists) - for Atlantis deployment
    - Target namespaces (if specified) - for system resources
    - Atlantis Deployment with:
      - MinIO credentials mounted
      - Kubernetes provider access (ServiceAccount)
-     - **hostAliases** to make `minio.127.0.0.1.nip.io` resolve to ingress controller (enables same backend config as manual Terraform)
+     - **Init container** to create `~/.kube/config` using in-cluster service account (required for shared resources Terraform)
+     - DNS resolution for `*.127.0.0.1.nip.io` is handled cluster-wide by CoreDNS (configured in Phase 1), so no per-deployment `hostAliases` needed
    - Service
    - Ingress
    - ConfigMap (server-side repo config)
@@ -405,7 +440,7 @@ Use GitLab API directly (NOT Terraform) to:
   - Example: System-Alpha Atlantis runs in `atlantis` but can only create/modify resources in `system-alpha` namespace
 
 3. **Outputs:**
-   - `atlantis_url`
+   - `atlantis_host`
    - `webhook_url`
    - `namespace`
 
@@ -417,29 +452,42 @@ Use GitLab API directly (NOT Terraform) to:
 
 **Key Implementation Details:**
 
-The module must configure `hostAliases` in the Atlantis deployment to enable MinIO access via ingress:
+**1. Kubeconfig Setup for Terraform:**
+The shared resources Terraform configuration expects `~/.kube/config` to exist. For Atlantis running in-cluster, we need an init container to create this:
 
-```hcl
-# In main.tf, query ingress controller service
-data "kubernetes_service" "ingress_nginx" {
-  metadata {
-    name      = "ingress-nginx-controller"
-    namespace = "ingress-nginx"
-  }
-}
-
-# In deployment template (deployment.yaml.tpl)
-spec:
-  template:
-    spec:
-      hostAliases:
-        - ip: "${ingress_controller_ip}"
-          hostnames:
-            - "minio.127.0.0.1.nip.io"
-            - "gitlab.127.0.0.1.nip.io"  # May also need this for GitLab API access
+```yaml
+# In deployment template
+initContainers:
+  - name: setup-kubeconfig
+    image: bitnami/kubectl:latest
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /home/atlantis/.kube
+        kubectl config set-cluster in-cluster \
+          --server=https://kubernetes.default.svc \
+          --certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        kubectl config set-credentials atlantis \
+          --token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+        kubectl config set-context kind-atlantis-demo \
+          --cluster=in-cluster \
+          --user=atlantis
+        kubectl config use-context kind-atlantis-demo
+    volumeMounts:
+      - name: atlantis-data
+        mountPath: /home/atlantis
 ```
 
-This allows Atlantis pods to access MinIO and GitLab using the same ingress URLs that work from your laptop.
+This creates a kubeconfig that uses the pod's service account, matching the `kind-atlantis-demo` context expected by the Terraform configuration.
+
+**2. DNS Resolution for Ingress Access (handled by CoreDNS):**
+No per-deployment configuration is needed. The CoreDNS `rewrite` rule configured in Phase 1 resolves `*.127.0.0.1.nip.io` to the ingress-nginx-controller ClusterIP for all pods in the cluster. This means the Atlantis module does **not** need:
+- A `kubernetes_service` data source for the ingress controller
+- `hostAliases` in the deployment template
+- Any knowledge of the ingress controller IP
+
+Atlantis pods can access `minio.127.0.0.1.nip.io` and `gitlab.127.0.0.1.nip.io` out of the box, using the same URLs that work from your laptop.
 
 **Validation:**
 - Module passes `terraform validate`
@@ -447,7 +495,7 @@ This allows Atlantis pods to access MinIO and GitLab using the same ingress URLs
 
 ---
 
-### Phase 6: Platform Atlantis Deployment
+### Phase 7: Platform Atlantis Deployment
 
 **Goal:** Deploy the Platform Atlantis server using Terraform directly (bootstrap step)
 
@@ -467,34 +515,42 @@ This allows Atlantis pods to access MinIO and GitLab using the same ingress URLs
    - Set repo allowlist to this repo
    - Configure MinIO backend
 
-2. Apply Terraform manually (this is the bootstrap!):
+2. Update `atlantis.yaml` at repo root to add Platform Atlantis project:
+   - Add project for `atlantis-servers/environments/platform/`
+   - Configure auto-plan on changes to relevant paths
+   - (The atlantis.yaml was created in Phase 5 with the shared-resources project)
+
+3. Apply Terraform manually (this is the bootstrap!):
    ```bash
    cd atlantis-servers/environments/platform
    terraform init
    terraform apply
    ```
 
-3. Configure webhook in GitLab for this repository
-
-4. Create `atlantis.yaml` at repo root to define Atlantis workflows for Platform:
-   - Define projects for `atlantis-servers/environments/platform/` (Platform Atlantis itself)
-   - Configure auto-plan on changes to relevant paths
-   - Set up workflow requirements (e.g., approvals for production changes)
+4. Configure webhook in GitLab for this repository
 
 5. Commit and push platform configuration to GitLab
 
 **Files to create:**
-- `atlantis.yaml` (root level - Platform repo config)
 - `atlantis-servers/environments/platform/main.tf`
 - `atlantis-servers/environments/platform/variables.tf`
 - `atlantis-servers/environments/platform/terraform.tfvars`
 - `atlantis-servers/environments/platform/backend.tf`
-- `scripts/05-deploy-platform-atlantis.sh`
+- `scripts/07-deploy-platform-atlantis.sh`
 
-**Example atlantis.yaml structure:**
+**Updated atlantis.yaml structure (now includes both projects):**
 ```yaml
 version: 3
 projects:
+  - name: shared-resources
+    dir: atlantis-servers/shared
+    workspace: default
+    autoplan:
+      when_modified:
+        - "*.tf"
+        - "*.tfvars"
+      enabled: true
+
   - name: platform-atlantis
     dir: atlantis-servers/environments/platform
     workspace: default
@@ -502,8 +558,8 @@ projects:
       when_modified:
         - "*.tf"
         - "*.tfvars"
-        - ../modules/atlantis-server/*.tf
-        - ../modules/atlantis-server/templates/*.tpl
+        - ../../modules/atlantis-server/**/*.tf
+        - ../../modules/atlantis-server/templates/*.tpl
       enabled: true
 ```
 
@@ -517,12 +573,11 @@ projects:
 
 ---
 
-### Phase 7: System Atlantis Deployments
+### Phase 8: System Atlantis Deployments
 
 **Goal:** Use Platform Atlantis to deploy system-specific Atlantis servers via PR workflow
 
 **System-Alpha Atlantis Configuration:**
-- Namespace: `atlantis` (same as platform - all Atlantis servers are platform components)
 - Deployment name: `atlantis-system-alpha`
 - Monitors: `system-alpha-infra` (GitLab repo)
 - URL: `http://atlantis-alpha.127.0.0.1.nip.io`
@@ -531,7 +586,6 @@ projects:
 - State: Stored in MinIO at `atlantis-servers/system-alpha/terraform.tfstate`
 
 **System-Beta Atlantis Configuration:**
-- Namespace: `atlantis` (same as platform - all Atlantis servers are platform components)
 - Deployment name: `atlantis-system-beta`
 - Monitors: `system-beta-infra` (GitLab repo)
 - URL: `http://atlantis-beta.127.0.0.1.nip.io`
@@ -540,8 +594,8 @@ projects:
 - State: Stored in MinIO at `atlantis-servers/system-beta/terraform.tfstate`
 
 **Security Model:**
-- System developers interact with Atlantis **only via GitLab PRs**
-- System developers have **no access** to:
+- App developers interact with Atlantis **only via GitLab PRs**
+- App developers have **no access** to:
   - `atlantis` namespace (where Atlantis servers run)
   - `minio` namespace (where Terraform state is stored)
   - Terraform state files
@@ -582,7 +636,7 @@ projects:
 
 ---
 
-### Phase 8: Demo Repositories Setup
+### Phase 9: Demo Repositories Setup
 
 **Goal:** Create sample Terraform configurations in system repos for demonstrating Atlantis workflows
 
@@ -610,13 +664,13 @@ Each system repo (`system-alpha-infra`, `system-beta-infra`) will have:
 
 **Tasks:**
 1. Create demo repository content locally
-2. Push to GitLab repos created in Phase 3
-3. System Atlantis instances (deployed in Phase 7) will detect the repos
+2. Push to GitLab repos (will be created via API similar to Phase 4)
+3. System Atlantis instances (deployed in Phase 8) will detect the repos
 
 **Files to create:**
 - `demo-repos/system-alpha-infra/*`
 - `demo-repos/system-beta-infra/*`
-- `scripts/06-create-demo-repos.sh`
+- `scripts/09-create-demo-repos.sh`
 
 **Validation:**
 - Repos pushed to GitLab
@@ -625,7 +679,7 @@ Each system repo (`system-alpha-infra`, `system-beta-infra`) will have:
 
 ---
 
-### Phase 9: Demo Workflow Script
+### Phase 10: Demo Workflow Script
 
 **Goal:** Create guided demo script showing the complete Atlantis bootstrap pattern and features
 
@@ -810,13 +864,14 @@ Before starting implementation:
 | Phase 1: Kind Setup | 30 min |
 | Phase 2: GitLab Deploy | 1 hour |
 | Phase 3: MinIO Setup | 45 min |
-| Phase 4: GitLab Config (Terraform) | 1 hour |
-| Phase 5: Atlantis Module | 2 hours |
-| Phase 6: Platform Atlantis | 1 hour |
-| Phase 7: System Atlantis | 1 hour |
-| Phase 8: Demo Repos | 1 hour |
-| Phase 9: Demo Script | 1.5 hours |
-| **Total** | ~9.5-10.5 hours |
+| Phase 4: Create Repo | 20 min |
+| Phase 5: Shared Resources | 45 min |
+| Phase 6: Atlantis Module | 2 hours |
+| Phase 7: Platform Atlantis | 1 hour |
+| Phase 8: Systems Atlantis | 1 hour |
+| Phase 9: Demo Repos | 1 hour |
+| Phase 10: Demo Script | 1.5 hours |
+| **Total** | ~9.5-10 hours |
 
 ---
 

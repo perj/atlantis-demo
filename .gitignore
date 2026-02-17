@@ -1,0 +1,7 @@
+.terraform
+
+# Atlantis won't commit lock changes so best to not use them.
+.terraform.lock.hcl
+
+# Temp files
+tfplan

@@ -1,0 +1,29 @@
+version: 3
+projects:
+  # Shared resources project - managed by Platform Atlantis
+  - name: shared-resources
+    dir: atlantis-servers/shared
+    workspace: default
+    autoplan:
+      when_modified:
+        - "*.tf"
+        - "*.tfvars"
+      enabled: true
+    apply_requirements:
+      - approved
+    workflow: terraform
+
+  # Platform Atlantis server - managed by Platform Atlantis (self-managing)
+  - name: platform-atlantis
+    dir: atlantis-servers/environments/platform
+    workspace: default
+    autoplan:
+      when_modified:
+        - "*.tf"
+        - "*.tfvars"
+        - ../../modules/atlantis-server/**/*.tf
+        - ../../modules/atlantis-server/templates/*.tpl
+      enabled: true
+    apply_requirements:
+      - approved
+    workflow: terraform

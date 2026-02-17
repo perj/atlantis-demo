@@ -55,6 +55,13 @@ spec:
               mc anonymous set-json /tmp/policy.json myminio/terraform-states
 
               echo "MinIO initialization complete!"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+              ephemeral-storage: 64Mi
+            limits:
+              memory: 128Mi
           env:
             - name: MINIO_ROOT_USER
               valueFrom:

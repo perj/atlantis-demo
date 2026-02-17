@@ -225,6 +225,38 @@ install_ingress_nginx() {
     kubectl get pods -n ingress-nginx
 }
 
+configure_coredns() {
+    log_info "Configuring CoreDNS to resolve *.127.0.0.1.nip.io to ingress controller..."
+
+    REWRITE_RULE="    rewrite name regex .*\\.127\\.0\\.0\\.1\\.nip\\.io ingress-nginx-controller.ingress-nginx.svc.cluster.local answer auto"
+
+    # Get current Corefile
+    CURRENT_COREFILE=$(kubectl get configmap coredns -n kube-system -o jsonpath='{.data.Corefile}')
+
+    # Check if already configured (idempotent)
+    if echo "$CURRENT_COREFILE" | grep -q 'rewrite name regex.*nip\.io'; then
+        log_warning "CoreDNS rewrite rule already configured, skipping"
+        return 0
+    fi
+
+    # Insert rewrite rule before the kubernetes plugin line
+    NEW_COREFILE=$(echo "$CURRENT_COREFILE" | awk -v rule="$REWRITE_RULE" '
+        /^[[:space:]]*kubernetes cluster\.local/ { print rule }
+        { print }
+    ')
+
+    # Apply updated ConfigMap
+    kubectl create configmap coredns -n kube-system \
+        --from-literal=Corefile="$NEW_COREFILE" \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+    # Restart CoreDNS to pick up changes
+    kubectl rollout restart deployment coredns -n kube-system
+    kubectl rollout status deployment coredns -n kube-system --timeout="${KUBECTL_WAIT_TIMEOUT}"
+
+    log_success "CoreDNS configured — all pods now resolve *.127.0.0.1.nip.io to ingress controller"
+}
+
 validate_setup() {
     log_info "Validating setup..."
 
@@ -241,8 +273,14 @@ validate_setup() {
     kubectl get pods -n ingress-nginx
 
     echo ""
-    log_info "/etc/hosts entries:"
-    grep "# Atlantis Demo" /etc/hosts || log_warning "No entries found in /etc/hosts"
+    log_info "CoreDNS wildcard resolution:"
+    EXPECTED_IP=$(kubectl get svc ingress-nginx-controller -n ingress-nginx -o jsonpath='{.spec.clusterIP}')
+    RESOLVED_IP=$(kubectl run dns-test --rm -i --restart=Never --image=busybox:1.36 -- nslookup minio.127.0.0.1.nip.io 2>/dev/null | awk '/^Address:/ && !/:[0-9]+$/ {print $2}' | tail -1)
+    if [ "$RESOLVED_IP" = "$EXPECTED_IP" ]; then
+        log_success "minio.127.0.0.1.nip.io resolves to ${RESOLVED_IP} (ingress controller ClusterIP)"
+    else
+        log_error "CoreDNS resolution failed: expected ${EXPECTED_IP}, got ${RESOLVED_IP:-nothing}"
+    fi
 
     echo ""
     log_success "Setup validation complete!"
@@ -273,6 +311,7 @@ main() {
     check_helm
     create_cluster
     install_ingress_nginx
+    configure_coredns
     validate_setup
     print_summary
 }
