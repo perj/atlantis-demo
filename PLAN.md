@@ -538,7 +538,7 @@ Atlantis pods can access `minio.127.0.0.1.nip.io` and `gitlab.127.0.0.1.nip.io` 
 - `atlantis-servers/environments/platform/backend.tf`
 - `scripts/07-deploy-platform-atlantis.sh`
 
-**Updated atlantis.yaml structure (now includes both projects):**
+**Updated atlantis.yaml structure (includes shared and platform projects):**
 ```yaml
 version: 3
 projects:
@@ -563,6 +563,8 @@ projects:
       enabled: true
 ```
 
+**Note:** System Atlantis projects (system-alpha, system-beta) are added to atlantis.yaml in Phase 8 when the MR is created.
+
 **Validation:**
 - Platform Atlantis UI accessible
 - Webhook registered in GitLab for this repo
@@ -577,21 +579,23 @@ projects:
 
 **Goal:** Use Platform Atlantis to deploy system-specific Atlantis servers via PR workflow
 
-**System-Alpha Atlantis Configuration:**
+**System-Alpha Atlantis Configuration (Auto-Detect Projects):**
 - Deployment name: `atlantis-system-alpha`
 - Monitors: `system-alpha-infra` (GitLab repo)
 - URL: `http://atlantis-alpha.127.0.0.1.nip.io`
 - **Target namespace:** `system-alpha` (creates resources here via RBAC)
 - ServiceAccount with Role/RoleBinding to manage `system-alpha` namespace only
 - State: Stored in MinIO at `atlantis-servers/system-alpha/terraform.tfstate`
+- **Atlantis feature:** Auto-detect projects — no `atlantis.yaml` in the repo. Atlantis automatically discovers directories containing `.tf` files and creates projects from them.
 
-**System-Beta Atlantis Configuration:**
+**System-Beta Atlantis Configuration (Workspace-Based Environments):**
 - Deployment name: `atlantis-system-beta`
 - Monitors: `system-beta-infra` (GitLab repo)
 - URL: `http://atlantis-beta.127.0.0.1.nip.io`
 - **Target namespace:** `system-beta` (creates resources here via RBAC)
 - ServiceAccount with Role/RoleBinding to manage `system-beta` namespace only
 - State: Stored in MinIO at `atlantis-servers/system-beta/terraform.tfstate`
+- **Atlantis feature:** Workspace separation — single Terraform directory with an `atlantis.yaml` that defines `dev` and `prod` projects using different workspaces and `.tfvars` files.
 
 **Security Model:**
 - App developers interact with Atlantis **only via GitLab PRs**
@@ -607,16 +611,19 @@ projects:
    - `atlantis-servers/environments/system-beta/` - uses atlantis-server module
    - Both configure MinIO backend
 
-2. Create PR in this repo with system Atlantis configs
+2. **Script creates MR** via GitLab API and handles re-runs gracefully:
+   - If system configs don't exist on main: Create them fresh
+   - If they already exist (re-running demo): Add a timestamp label to trigger a diff
+   - Ensures there's always a meaningful change for Atlantis to plan
 
 3. Platform Atlantis will:
-   - Auto-plan showing the two new Atlantis deployments
+   - Auto-plan showing the two new/updated Atlantis deployments
    - Wait for `atlantis apply` comment
    - Deploy both system Atlantis servers
 
 4. After apply, configure webhooks in GitLab for system repos
 
-**Files to create:**
+**Files to create/modify:**
 - `atlantis-servers/environments/system-alpha/main.tf`
 - `atlantis-servers/environments/system-alpha/variables.tf`
 - `atlantis-servers/environments/system-alpha/terraform.tfvars`
@@ -625,20 +632,109 @@ projects:
 - `atlantis-servers/environments/system-beta/variables.tf`
 - `atlantis-servers/environments/system-beta/terraform.tfvars`
 - `atlantis-servers/environments/system-beta/backend.tf`
+- `atlantis.yaml` - Add system-alpha and system-beta projects
+- `scripts/08-deploy-systems-atlantis.sh` - Creates MR via API
+
+**Updated atlantis.yaml (adds system projects):**
+```yaml
+version: 3
+projects:
+  - name: shared-resources
+    dir: atlantis-servers/shared
+    workspace: default
+    autoplan:
+      when_modified: ["*.tf", "*.tfvars"]
+      enabled: true
+
+  - name: platform-atlantis
+    dir: atlantis-servers/environments/platform
+    workspace: default
+    autoplan:
+      when_modified:
+        - "*.tf"
+        - "*.tfvars"
+        - ../../modules/atlantis-server/**/*.tf
+        - ../../modules/atlantis-server/templates/*.tpl
+      enabled: true
+
+  - name: system-alpha-atlantis
+    dir: atlantis-servers/environments/system-alpha
+    workspace: default
+    autoplan:
+      when_modified:
+        - "*.tf"
+        - "*.tfvars"
+        - ../../modules/atlantis-server/**/*.tf
+        - ../../modules/atlantis-server/templates/*.tpl
+      enabled: true
+
+  - name: system-beta-atlantis
+    dir: atlantis-servers/environments/system-beta
+    workspace: default
+    autoplan:
+      when_modified:
+        - "*.tf"
+        - "*.tfvars"
+        - ../../modules/atlantis-server/**/*.tf
+        - ../../modules/atlantis-server/templates/*.tpl
+      enabled: true
+```
+
+**Script behavior (handles re-runs):**
+```bash
+# Script flow:
+1. Check if system-alpha/beta configs exist on main branch
+2. If new:
+   - Create fresh configs in local branch
+   - Add system projects to atlantis.yaml
+3. If existing (re-run):
+   - Checkout main, create new branch
+   - Update terraform.tfvars with new demo_run_timestamp variable
+   - This creates a harmless diff that triggers Atlantis auto-plan
+4. Push branch and create MR via GitLab API
+5. Output example:
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   ✅ Merge Request Created Successfully!
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+   📋 MR Details:
+      Title: Add System Atlantis Servers
+      URL: http://gitlab.127.0.0.1.nip.io/root/atlantis-demo/-/merge_requests/1
+
+   🤖 Platform Atlantis will auto-plan in ~30 seconds:
+      Monitor: http://atlantis-platform.127.0.0.1.nip.io
+
+   📝 Next Steps:
+      1. View auto-plan in MR comments
+      2. Review the plan shows 2 new Atlantis deployments
+      3. Comment "atlantis apply" to deploy
+
+   🎯 After apply, system Atlantis servers will be available at:
+      • System Alpha: http://atlantis-alpha.127.0.0.1.nip.io
+      • System Beta:  http://atlantis-beta.127.0.0.1.nip.io
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+**Re-run strategy:**
+- Each terraform.tfvars includes a `demo_run_timestamp` variable (used as a label)
+- On re-runs, script updates this timestamp to create a diff
+- Atlantis auto-plans the change (label update is harmless but triggers plan)
+- Demonstrates Atlantis workflow even when infrastructure already exists
 
 **Validation:**
 - Both system Atlantis UIs accessible
 - Webhooks registered in GitLab for system repos
 - Each system Atlantis shows connected to its repository
 - State files visible in MinIO console
+- Re-running script creates new MR with updated timestamp
 
-**Demo Value:** This phase demonstrates the core value proposition - using Atlantis to manage Atlantis itself!
+**Demo Value:** This phase demonstrates the core value proposition — using Atlantis to manage Atlantis itself!
 
 ---
 
 ### Phase 9: Demo Repositories Setup
 
-**Goal:** Create sample Terraform configurations in system repos for demonstrating Atlantis workflows
+**Goal:** Create sample Terraform configurations in system repos that showcase two different Atlantis project management patterns
 
 **Demo Infrastructure (Kubernetes-native, no cloud required):**
 - ConfigMaps
@@ -648,34 +744,122 @@ projects:
 - Resource Quotas
 - Network Policies
 
-**Repository Structure:**
-Each system repo (`system-alpha-infra`, `system-beta-infra`) will have:
-- `atlantis.yaml` - Project configuration
-- Multiple environments (dev/prod) in subdirectories
-- Terraform configs using Kubernetes provider
-- MinIO backend configuration
+**System-Alpha: Auto-Detect Projects Pattern**
 
-**Atlantis.yaml Features to Demo:**
-- Multiple projects in one repo (dev/prod environments)
-- Workspace separation
-- Custom workflows
-- Plan requirements (approvals)
-- Auto-plan on specific paths
+The `system-alpha-infra` repo has **no `atlantis.yaml`**. Instead, it uses separate directories for each environment. Atlantis auto-discovers them:
+
+```
+system-alpha-infra/
+├── dev/
+│   ├── main.tf           # K8s resources with "dev-" prefix in system-alpha namespace
+│   ├── variables.tf
+│   └── backend.tf        # MinIO state key: system-alpha-infra/dev/terraform.tfstate
+└── prod/
+    ├── main.tf           # K8s resources with "prod-" prefix in system-alpha namespace
+    ├── variables.tf
+    └── backend.tf        # MinIO state key: system-alpha-infra/prod/terraform.tfstate
+```
+
+- No repo-side config — Atlantis detects `dev/` and `prod/` as separate projects automatically
+- A PR touching `dev/main.tf` only plans the `dev` project; touching both plans both
+- Shows the simplest possible onboarding: just add `.tf` files and Atlantis handles the rest
+
+**System-Beta: Workspace-Based Environments Pattern**
+
+The `system-beta-infra` repo uses a single Terraform directory with an `atlantis.yaml` that defines two projects pointing to the same code but using different workspaces:
+
+```
+system-beta-infra/
+├── atlantis.yaml         # Defines dev & prod projects with workspace separation
+├── main.tf               # Shared K8s resource definitions using var.environment
+├── variables.tf
+├── backend.tf            # Workspace-aware state key: system-beta-infra/${workspace}/terraform.tfstate
+├── dev.tfvars            # environment = "dev", replica_count = 1, etc.
+└── prod.tfvars           # environment = "prod", replica_count = 2, etc.
+```
+
+`atlantis.yaml`:
+```yaml
+version: 3
+projects:
+  - name: dev
+    dir: .
+    workspace: dev
+    autoplan:
+      when_modified: ["*.tf", "dev.tfvars"]
+      enabled: true
+    terraform_version: v1.14.x
+  - name: prod
+    dir: .
+    workspace: prod
+    autoplan:
+      when_modified: ["*.tf", "prod.tfvars"]
+      enabled: true
+    terraform_version: v1.14.x
+```
+
+- Same Terraform code, different variable files per workspace
+- Selective auto-plan: changing `dev.tfvars` only triggers the `dev` project
+- Selective apply: `atlantis apply -p dev` or `atlantis apply -p prod`
+- Shows how teams can share code across environments with workspace isolation
+
+**Atlantis Features Demonstrated Across Both Repos:**
+
+| Feature | System-Alpha | System-Beta |
+|---------|-------------|-------------|
+| Project discovery | Auto-detect (no config) | Explicit `atlantis.yaml` |
+| Environment separation | Separate directories | Terraform workspaces |
+| Auto-plan trigger | Per-directory changes | Per-tfvars file changes |
+| Selective apply | `atlantis apply -d dev` | `atlantis apply -p dev` |
+| State isolation | Separate state keys per dir | Separate state keys per workspace |
+
+**GitLab Users and Approval Rules:**
+
+For the demo we use two GitLab users with distinct roles:
+
+| User | Role | Can push/create MR | Can approve MR |
+|------|------|---------------------|----------------|
+| `developer` | Developer | Yes | No |
+| `root` | Owner/Maintainer | Yes | Yes |
+
+The `developer` user is created in the Phase 9 script. Each system repo is configured with:
+- `developer` added as a **Developer** member
+- Approval rule requiring 1 approval
+- "Prevent approval by author" enabled — so `developer` cannot approve their own MRs
+- `root` acts as the approver (already exists as project owner)
+
+This enables the approval workflow demo: `developer` creates the MR, Atlantis auto-plans, but `atlantis apply` is blocked until `root` approves.
 
 **Tasks:**
-1. Create demo repository content locally
-2. Push to GitLab repos (will be created via API similar to Phase 4)
-3. System Atlantis instances (deployed in Phase 8) will detect the repos
+1. Create `developer` GitLab user (via API)
+2. Create demo repository content locally
+3. Push to GitLab repos (created via API similar to Phase 4)
+4. Add `developer` as a member of each repo
+5. Configure approval rules on each repo
+6. System Atlantis instances (deployed in Phase 8) will detect the repos
 
 **Files to create:**
-- `demo-repos/system-alpha-infra/*`
-- `demo-repos/system-beta-infra/*`
+- `demo-repos/system-alpha-infra/dev/main.tf`
+- `demo-repos/system-alpha-infra/dev/variables.tf`
+- `demo-repos/system-alpha-infra/dev/backend.tf`
+- `demo-repos/system-alpha-infra/prod/main.tf`
+- `demo-repos/system-alpha-infra/prod/variables.tf`
+- `demo-repos/system-alpha-infra/prod/backend.tf`
+- `demo-repos/system-beta-infra/atlantis.yaml`
+- `demo-repos/system-beta-infra/main.tf`
+- `demo-repos/system-beta-infra/variables.tf`
+- `demo-repos/system-beta-infra/backend.tf`
+- `demo-repos/system-beta-infra/dev.tfvars`
+- `demo-repos/system-beta-infra/prod.tfvars`
 - `scripts/09-create-demo-repos.sh`
 
 **Validation:**
-- Repos pushed to GitLab
-- System Atlantis instances detect repo configuration
-- Can create test PR and see auto-plan
+- `developer` user exists in GitLab and can log in
+- Repos pushed to GitLab with `developer` as a member
+- Approval rules configured on both repos
+- System-Alpha Atlantis auto-discovers `dev` and `prod` projects (no atlantis.yaml needed)
+- System-Beta Atlantis shows `dev` and `prod` workspace projects from its `atlantis.yaml`
+- Can create test MR as `developer` and see auto-plan for both patterns
 
 ---
 
@@ -692,18 +876,20 @@ Each system repo (`system-alpha-infra`, `system-beta-infra`) will have:
    - Comment `atlantis apply` to deploy system-gamma Atlantis
    - Show new Atlantis instance running and monitoring `system-gamma-infra` repo
 
-2. **Basic Plan/Apply Flow:**
+2. **Auto-Detect Projects (system-alpha-infra):**
    - Create branch in system-alpha-infra repo
-   - Add new ConfigMap resource
+   - Add a new ConfigMap in `dev/main.tf`
    - Push and create MR
-   - Show system-alpha Atlantis auto-plan comment
-   - Comment `atlantis apply`
+   - Show Atlantis auto-discovers `dev` as a project and plans it (no atlantis.yaml!)
+   - Comment `atlantis apply -d dev`
    - Show resource created in cluster
+   - Then modify both `dev/` and `prod/` — show Atlantis plans both projects automatically
 
-3. **Multi-Environment:**
-   - Change both dev and prod tfvars in system-beta-infra
-   - Show separate plans for each environment
-   - Apply dev first, then prod with selective `atlantis apply -p dev`
+3. **Workspace Environments (system-beta-infra):**
+   - Modify `main.tf` in system-beta-infra (affects both workspaces)
+   - Show Atlantis creates separate plans for `dev` and `prod` workspace projects
+   - Apply selectively: `atlantis apply -p dev` first, then `atlantis apply -p prod`
+   - Modify only `dev.tfvars` — show only the `dev` project is planned (smart auto-plan)
 
 4. **System Isolation:**
    - Show system-alpha Atlantis can't affect system-beta namespace
@@ -715,9 +901,12 @@ Each system repo (`system-alpha-infra`, `system-beta-infra`) will have:
      - Other system's namespaces
 
 5. **Approval Workflow:**
-   - Configure require-approval in atlantis.yaml
-   - Show apply blocked until MR approved
-   - Approve MR, then apply
+   - `developer` creates MR with infrastructure change
+   - Atlantis auto-plans, but apply is blocked (requires approval)
+   - Show `atlantis apply` comment rejected — MR not yet approved
+   - `root` reviews and approves the MR
+   - `developer` comments `atlantis apply` — now succeeds
+   - Demonstrates separation of duties: committer ≠ approver
 
 6. **Locking:**
    - Start apply in one MR

@@ -21,3 +21,27 @@ projects:
         - ../../modules/atlantis-server/**/*.tf
         - ../../modules/atlantis-server/templates/*.tpl
       enabled: true
+
+  # System Alpha Atlantis server - managed by Platform Atlantis
+  - name: system-alpha-atlantis
+    dir: atlantis-servers/environments/system-alpha
+    workspace: default
+    autoplan:
+      when_modified:
+        - "*.tf"
+        - "*.tfvars"
+        - ../../modules/atlantis-server/**/*.tf
+        - ../../modules/atlantis-server/templates/*.tpl
+      enabled: true
+
+  # System Beta Atlantis server - managed by Platform Atlantis
+  - name: system-beta-atlantis
+    dir: atlantis-servers/environments/system-beta
+    workspace: default
+    autoplan:
+      when_modified:
+        - "*.tf"
+        - "*.tfvars"
+        - ../../modules/atlantis-server/**/*.tf
+        - ../../modules/atlantis-server/templates/*.tpl
+      enabled: true
