@@ -79,5 +79,97 @@ variable "atlantis_image" {
 variable "repo_config" {
   description = "Server-side repo configuration YAML content. If null, no server-side config is created."
   type        = string
+  default     = <<-EOT
+    repos:
+      - id: /.*/
+        plan_requirements: []
+        apply_requirements: [approved, mergeable]
+        import_requirements: [mergeable]
+  EOT
+}
+
+# --- Atlantis behavior settings ---
+
+variable "emoji_reaction" {
+  description = "Emoji reaction to add to comments when Atlantis starts processing. Empty string disables reactions."
+  type        = string
+  default     = "eyes"
+}
+
+variable "allow_commands" {
+  description = "Which commands are allowed. Comma-separated list or 'all'."
+  type        = string
+  default     = "all"
+}
+
+variable "automerge" {
+  description = "Automatically merge pull requests after all plans are applied."
+  type        = bool
+  default     = true
+}
+
+variable "autoplan_modules" {
+  description = "Automatically plan when module files change."
+  type        = bool
+  default     = true
+}
+
+variable "checkout_strategy" {
+  description = "How to check out the PR code. Options: 'branch', 'merge'."
+  type        = string
+  default     = "merge"
+}
+
+variable "enable_regexp_cmd" {
+  description = "Enable regular expressions in plan/apply commands."
+  type        = bool
+  default     = false
+}
+
+variable "fail_on_pre_workflow_hook_error" {
+  description = "Fail the operation if a pre-workflow hook returns a non-zero exit code."
+  type        = bool
+  default     = true
+}
+
+variable "pending_apply_status" {
+  description = "Set atlantis/apply commit status to pending after plan, blocking merge until apply completes. GitLab only."
+  type        = bool
+  default     = true
+}
+
+variable "log_level" {
+  description = "Atlantis log level. Options: debug, info, warn, error."
+  type        = string
+  default     = "info"
+}
+
+variable "restrict_file_list" {
+  description = "Restrict plan output to only show files within the project directory."
+  type        = bool
+  default     = true
+}
+
+variable "silence_allowlist_errors" {
+  description = "Silence errors from repos not in the allowlist."
+  type        = bool
+  default     = false
+}
+
+variable "silence_no_projects" {
+  description = "Silence 'no projects' comments when no projects match."
+  type        = bool
+  default     = false
+}
+
+variable "write_git_creds" {
+  description = "Write out a .git-credentials file with the GitLab token."
+  type        = bool
+  default     = true
+}
+
+variable "gitlab_group_allowlist" {
+  description = "Comma-separated list of GitLab groups and permission pairs. If null, the setting is not configured."
+  type        = string
   default     = null
 }

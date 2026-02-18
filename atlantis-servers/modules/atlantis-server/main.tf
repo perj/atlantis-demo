@@ -155,6 +155,7 @@ resource "kubernetes_deployment_v1" "atlantis" {
             "sh", "-c",
             <<-EOT
             mkdir -p /home/atlantis/.kube
+            export KUBECONFIG=/home/atlantis/.kube/config
             kubectl config set-cluster in-cluster \
               --server=https://kubernetes.default.svc \
               --certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
@@ -164,6 +165,8 @@ resource "kubernetes_deployment_v1" "atlantis" {
               --cluster=in-cluster \
               --user=atlantis
             kubectl config use-context kind-atlantis-demo
+            chown atlantis:atlantis /home/atlantis/.kube/config
+            chmod 644 /home/atlantis/.kube/config
             EOT
           ]
 
@@ -251,6 +254,80 @@ resource "kubernetes_deployment_v1" "atlantis" {
                 name = "minio-credentials"
                 key  = "AWS_SECRET_ACCESS_KEY"
               }
+            }
+          }
+
+          # Atlantis behavior settings
+          env {
+            name  = "ATLANTIS_EMOJI_REACTION"
+            value = var.emoji_reaction
+          }
+
+          env {
+            name  = "ATLANTIS_ALLOW_COMMANDS"
+            value = var.allow_commands
+          }
+
+          env {
+            name  = "ATLANTIS_AUTOMERGE"
+            value = tostring(var.automerge)
+          }
+
+          env {
+            name  = "ATLANTIS_AUTOPLAN_MODULES"
+            value = tostring(var.autoplan_modules)
+          }
+
+          env {
+            name  = "ATLANTIS_CHECKOUT_STRATEGY"
+            value = var.checkout_strategy
+          }
+
+          env {
+            name  = "ATLANTIS_ENABLE_REGEXP_CMD"
+            value = tostring(var.enable_regexp_cmd)
+          }
+
+          env {
+            name  = "ATLANTIS_FAIL_ON_PRE_WORKFLOW_HOOK_ERROR"
+            value = tostring(var.fail_on_pre_workflow_hook_error)
+          }
+
+          env {
+            name  = "ATLANTIS_PENDING_APPLY_STATUS"
+            value = tostring(var.pending_apply_status)
+          }
+
+          env {
+            name  = "ATLANTIS_LOG_LEVEL"
+            value = var.log_level
+          }
+
+          env {
+            name  = "ATLANTIS_RESTRICT_FILE_LIST"
+            value = tostring(var.restrict_file_list)
+          }
+
+          env {
+            name  = "ATLANTIS_SILENCE_ALLOWLIST_ERRORS"
+            value = tostring(var.silence_allowlist_errors)
+          }
+
+          env {
+            name  = "ATLANTIS_SILENCE_NO_PROJECTS"
+            value = tostring(var.silence_no_projects)
+          }
+
+          env {
+            name  = "ATLANTIS_WRITE_GIT_CREDS"
+            value = tostring(var.write_git_creds)
+          }
+
+          dynamic "env" {
+            for_each = var.gitlab_group_allowlist != null ? [1] : []
+            content {
+              name  = "ATLANTIS_GITLAB_GROUP_ALLOWLIST"
+              value = var.gitlab_group_allowlist
             }
           }
 

@@ -846,12 +846,12 @@ Before starting implementation:
 
 | Component | CPU Request | Memory Request | Storage |
 |-----------|-------------|----------------|---------|
-| GitLab CE | 500m | 3Gi | 10Gi |
+| GitLab CE | 500m | 4Gi | 10Gi |
 | MinIO | 100m | 512Mi | 10Gi |
 | Platform Atlantis | 100m | 256Mi | 1Gi |
 | System Atlantis (each x2) | 100m | 256Mi | 1Gi each |
 | Ingress Controller | 100m | 128Mi | - |
-| **Total** | ~1.3 CPU | ~4.5Gi | ~23Gi |
+| **Total** | ~1.3 CPU | ~5.5Gi | ~23Gi |
 
 **Note:** These are minimum requirements. For comfortable demo experience with GitLab, allocate at least 8GB RAM to Docker.
 

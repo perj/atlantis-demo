@@ -206,6 +206,41 @@ create_repository() {
         log_error "Response: ${response}"
         exit 1
     fi
+
+    configure_merge_settings "${token}"
+}
+
+configure_merge_settings() {
+    local token="$1"
+
+    log_info "Configuring merge request settings..."
+
+    # Get project ID
+    local project_id
+    project_id=$(curl -s \
+        --header "PRIVATE-TOKEN: ${token}" \
+        "${GITLAB_URL}/api/v4/projects/root%2F${REPO_NAME}" | \
+        grep -oP '"id":\K[0-9]+' | head -1)
+
+    if [ -z "${project_id}" ]; then
+        log_error "Could not determine project ID"
+        exit 1
+    fi
+
+    # Enable "Pipelines must succeed" to block merging until atlantis apply completes
+    local response
+    response=$(curl -s --request PUT "${GITLAB_URL}/api/v4/projects/${project_id}" \
+        --header "PRIVATE-TOKEN: ${token}" \
+        --header "Content-Type: application/json" \
+        --data '{
+            "only_allow_merge_if_pipeline_succeeds": true
+        }')
+
+    if echo "${response}" | grep -q '"only_allow_merge_if_pipeline_succeeds":true'; then
+        log_success "Merge request settings configured (pipelines must succeed)"
+    else
+        log_warning "Could not verify merge request settings"
+    fi
 }
 
 push_repository() {
