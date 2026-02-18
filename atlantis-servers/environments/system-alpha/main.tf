@@ -26,7 +26,7 @@ module "system_alpha_atlantis" {
 
   instance_name = "system-alpha"
   repo_allowlist = [
-    "gitlab.127.0.0.1.nip.io/root/system-alpha-infra",
+    "gitlab.127.0.0.1.nip.io/system-alpha/system-alpha-infra",
   ]
   atlantis_host     = "atlantis-alpha.127.0.0.1.nip.io"
   target_namespaces = ["system-alpha"]

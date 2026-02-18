@@ -44,11 +44,11 @@ This plan creates a fully local, self-contained demo environment showcasing Atla
 │  Bootstrap Flow:                                                         │
 │  1. Setup GitLab + MinIO (manual)                                        │
 │  2. Deploy Platform Atlantis to atlantis namespace (terraform apply)     │
-│  3. Deploy System Atlantis servers to atlantis namespace (via PRs)       │
+│  3. Deploy System Atlantis servers to atlantis namespace (via MRs)       │
 │                                                                          │
 │  Security Model:                                                         │
 │  - Platform developers: Access to atlantis, minio, gitlab namespaces     │
-│  - System developers: Only interact via GitLab PRs, no infra access      │
+│  - System developers: Only interact via GitLab MRs, no infra access      │
 │  - Atlantis ServiceAccounts: RBAC permissions to manage target NS        │
 │                                                                          │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -61,7 +61,7 @@ This plan creates a fully local, self-contained demo environment showcasing Atla
 - Renamed "team" → "system" (a system is a closely related set of services)
 - Platform Atlantis config lives in this repo (`atlantis-servers/platform/`)
 - Bootstrap pattern: Platform Atlantis → System Atlantis instances
-- Only platform Atlantis is deployed manually; system Atlantis via PRs
+- Only platform Atlantis is deployed manually; system Atlantis via MRs
 
 ```
 atlantis-demo/
@@ -334,7 +334,7 @@ git push gitlab main
      - Personal access token with `api` scope
 
 2. Create root `atlantis.yaml` defining project for `atlantis-servers/shared/`:
-   - This allows Platform Atlantis (once deployed) to manage shared resources via PRs
+   - This allows Platform Atlantis (once deployed) to manage shared resources via MRs
    - For now, we'll apply manually, but later updates will go through Atlantis
 
 3. Apply Terraform configuration manually (bootstrap step)
@@ -396,7 +396,7 @@ terraform apply
 - Makes the setup reproducible and version-controlled
 
 **Why create atlantis.yaml now:**
-- Once Platform Atlantis is deployed, it can manage updates to shared resources via PRs
+- Once Platform Atlantis is deployed, it can manage updates to shared resources via MRs
 - Demonstrates that Platform Atlantis will manage its own infrastructure
 - Initial apply is manual (bootstrap), but subsequent changes go through Atlantis workflow
 
@@ -568,16 +568,16 @@ projects:
 **Validation:**
 - Platform Atlantis UI accessible
 - Webhook registered in GitLab for this repo
-- Can create PR in this repo and see Atlantis respond
+- Can create MR in this repo and see Atlantis respond
 - Platform Atlantis can read `atlantis-servers/environments/` directory
 
-**Key Concept:** This is the only Atlantis instance deployed manually with `terraform apply`. All subsequent Atlantis servers will be deployed via PRs to this repo, managed by Platform Atlantis.
+**Key Concept:** This is the only Atlantis instance deployed manually with `terraform apply`. All subsequent Atlantis servers will be deployed via MRs to this repo, managed by Platform Atlantis.
 
 ---
 
 ### Phase 8: System Atlantis Deployments
 
-**Goal:** Use Platform Atlantis to deploy system-specific Atlantis servers via PR workflow
+**Goal:** Use Platform Atlantis to deploy system-specific Atlantis servers via MR workflow
 
 **System-Alpha Atlantis Configuration (Auto-Detect Projects):**
 - Deployment name: `atlantis-system-alpha`
@@ -595,10 +595,10 @@ projects:
 - **Target namespace:** `system-beta` (creates resources here via RBAC)
 - ServiceAccount with Role/RoleBinding to manage `system-beta` namespace only
 - State: Stored in MinIO at `atlantis-servers/system-beta/terraform.tfstate`
-- **Atlantis feature:** Workspace separation — single Terraform directory with an `atlantis.yaml` that defines `dev` and `prod` projects using different workspaces and `.tfvars` files.
+- **Atlantis feature:** Workspace separation — single Terraform directory with an `atlantis.yaml` that defines `dev` and `prod` projects using different workspaces with environment config via workspace-based locals.
 
 **Security Model:**
-- App developers interact with Atlantis **only via GitLab PRs**
+- App developers interact with Atlantis **only via GitLab MRs**
 - App developers have **no access** to:
   - `atlantis` namespace (where Atlantis servers run)
   - `minio` namespace (where Terraform state is stored)
@@ -761,21 +761,43 @@ system-alpha-infra/
 ```
 
 - No repo-side config — Atlantis detects `dev/` and `prod/` as separate projects automatically
-- A PR touching `dev/main.tf` only plans the `dev` project; touching both plans both
+- A MR touching `dev/main.tf` only plans the `dev` project; touching both plans both
 - Shows the simplest possible onboarding: just add `.tf` files and Atlantis handles the rest
 
 **System-Beta: Workspace-Based Environments Pattern**
 
-The `system-beta-infra` repo uses a single Terraform directory with an `atlantis.yaml` that defines two projects pointing to the same code but using different workspaces:
+The `system-beta-infra` repo uses a single Terraform directory with an `atlantis.yaml` that defines two projects pointing to the same code but using different workspaces. Environment-specific configuration is handled via workspace-based locals:
 
 ```
 system-beta-infra/
 ├── atlantis.yaml         # Defines dev & prod projects with workspace separation
-├── main.tf               # Shared K8s resource definitions using var.environment
+├── main.tf               # Shared K8s resources with workspace-based config maps
 ├── variables.tf
-├── backend.tf            # Workspace-aware state key: system-beta-infra/${workspace}/terraform.tfstate
-├── dev.tfvars            # environment = "dev", replica_count = 1, etc.
-└── prod.tfvars           # environment = "prod", replica_count = 2, etc.
+└── backend.tf            # Workspace-aware state key: system-beta-infra/${workspace}/terraform.tfstate
+```
+
+`main.tf` (snippet showing workspace-based configuration):
+```hcl
+locals {
+  config = {
+    dev = {
+      replica_count   = 1
+    }
+    prod = {
+      replica_count   = 3
+    }
+  }[terraform.workspace]
+}
+
+resource "kubernetes_config_map" "app" {
+  metadata {
+    name      = "${terraform.workspace}-app-config"
+    namespace = "system-beta"
+  }
+  data = {
+    replicas = local.config.replica_count
+  }
+}
 ```
 
 `atlantis.yaml`:
@@ -786,20 +808,20 @@ projects:
     dir: .
     workspace: dev
     autoplan:
-      when_modified: ["*.tf", "dev.tfvars"]
+      when_modified: ["*.tf"]
       enabled: true
     terraform_version: v1.14.x
   - name: prod
     dir: .
     workspace: prod
     autoplan:
-      when_modified: ["*.tf", "prod.tfvars"]
+      when_modified: ["*.tf"]
       enabled: true
     terraform_version: v1.14.x
 ```
 
-- Same Terraform code, different variable files per workspace
-- Selective auto-plan: changing `dev.tfvars` only triggers the `dev` project
+- Same Terraform code, environment config via workspace-based locals
+- Any `.tf` file change triggers plans for both `dev` and `prod` projects (shared code)
 - Selective apply: `atlantis apply -p dev` or `atlantis apply -p prod`
 - Shows how teams can share code across environments with workspace isolation
 
@@ -809,7 +831,7 @@ projects:
 |---------|-------------|-------------|
 | Project discovery | Auto-detect (no config) | Explicit `atlantis.yaml` |
 | Environment separation | Separate directories | Terraform workspaces |
-| Auto-plan trigger | Per-directory changes | Per-tfvars file changes |
+| Auto-plan trigger | Per-directory changes | Per-code changes (any `.tf` file) |
 | Selective apply | `atlantis apply -d dev` | `atlantis apply -p dev` |
 | State isolation | Separate state keys per dir | Separate state keys per workspace |
 
@@ -849,8 +871,6 @@ This enables the approval workflow demo: `developer` creates the MR, Atlantis au
 - `demo-repos/system-beta-infra/main.tf`
 - `demo-repos/system-beta-infra/variables.tf`
 - `demo-repos/system-beta-infra/backend.tf`
-- `demo-repos/system-beta-infra/dev.tfvars`
-- `demo-repos/system-beta-infra/prod.tfvars`
 - `scripts/09-create-demo-repos.sh`
 
 **Validation:**
@@ -886,10 +906,11 @@ This enables the approval workflow demo: `developer` creates the MR, Atlantis au
    - Then modify both `dev/` and `prod/` — show Atlantis plans both projects automatically
 
 3. **Workspace Environments (system-beta-infra):**
-   - Modify `main.tf` in system-beta-infra (affects both workspaces)
+   - Modify `main.tf` in system-beta-infra (shared code affects both workspaces)
    - Show Atlantis creates separate plans for `dev` and `prod` workspace projects
+   - Each plan uses workspace-specific config from locals (different replica counts, prefixes)
    - Apply selectively: `atlantis apply -p dev` first, then `atlantis apply -p prod`
-   - Modify only `dev.tfvars` — show only the `dev` project is planned (smart auto-plan)
+   - Demonstrates how single codebase can manage multiple environments with workspace isolation
 
 4. **System Isolation:**
    - Show system-alpha Atlantis can't affect system-beta namespace
@@ -995,7 +1016,7 @@ Instead of actual cloud providers, use:
 Platform Developers → Full access to platform namespaces
                       (gitlab, minio, atlantis)
 
-System Developers   → GitLab PRs only
+System Developers   → GitLab MRs only
                       NO access to: atlantis NS, minio NS, TF state
 
 Atlantis Servers    → ServiceAccount + RBAC
@@ -1003,11 +1024,11 @@ Atlantis Servers    → ServiceAccount + RBAC
 ```
 
 **RBAC Implementation:**
-- Platform Atlantis ServiceAccount: Can create/modify resources in `atlantis` namespace
+- Platform Atlantis ServiceAccount: Can create/modify resources in all namespace
 - System-Alpha Atlantis ServiceAccount: Can create/modify resources in `system-alpha` namespace only
 - System-Beta Atlantis ServiceAccount: Can create/modify resources in `system-beta` namespace only
 
-**Demo Value:** This models real-world platform engineering where platform teams manage shared infrastructure (Atlantis, state storage) and system teams only interact through controlled interfaces (PRs).
+**Demo Value:** This models real-world platform engineering where platform teams manage shared infrastructure (Atlantis, state storage) and system teams only interact through controlled interfaces (MRs).
 
 ---
 
@@ -1073,7 +1094,7 @@ The demo is complete when:
 3.  ✅ Three Atlantis servers total: Platform, System-Alpha, System-Beta
 4.  ✅ All Atlantis instances use shared GitLab service account (`atlantis-bot`)
 5.  ✅ All Terraform state stored centrally in MinIO
-6.  ✅ **Bootstrap demo works:** Can deploy new Atlantis via PR to platform repo
+6.  ✅ **Bootstrap demo works:** Can deploy new Atlantis via MR to platform repo
 7.  ✅ Creating MR in system repos triggers automatic `terraform plan`
 8.  ✅ `atlantis apply` comment deploys resources to correct namespace
 9.  ✅ Systems cannot affect each other's namespaces (RBAC isolation)

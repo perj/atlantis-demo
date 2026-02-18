@@ -26,7 +26,7 @@ module "system_beta_atlantis" {
 
   instance_name = "system-beta"
   repo_allowlist = [
-    "gitlab.127.0.0.1.nip.io/root/system-beta-infra",
+    "gitlab.127.0.0.1.nip.io/system-beta/system-beta-infra",
   ]
   atlantis_host     = "atlantis-beta.127.0.0.1.nip.io"
   target_namespaces = ["system-beta"]
