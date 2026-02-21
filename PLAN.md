@@ -1,5 +1,9 @@
 # Atlantis Demo Environment - Implementation Plan
 
+This is (the final state of) the plan file used to create the demo. Initial version created with Claude, then each phase revisited and rivised manually and further with Claude. Finally each phase executed in turn, each execution also revised until working.
+
+Committed here mostly to show how an extensive plan can be created, then revised, the executed and also to be transparent that a lot of this repo was created with the help of Claude. Probably very obvious in some other parts as well.
+
 ## Overview
 
 This plan creates a fully local, self-contained demo environment showcasing Atlantis for Terraform workflows. The setup runs entirely on your local machine using Kind (Kubernetes in Docker) and a local GitLab instance.

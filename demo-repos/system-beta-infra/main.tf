@@ -17,22 +17,22 @@ provider "kubernetes" {
 locals {
   config = {
     dev = {
-      replica_count    = 1
-      log_level        = "debug"
-      cpu_request      = "1"
-      memory_request   = "2Gi"
-      cpu_limit        = "2"
-      memory_limit     = "4Gi"
-      max_pods         = 10
+      replica_count  = 1
+      log_level      = "debug"
+      cpu_request    = "1"
+      memory_request = "2Gi"
+      cpu_limit      = "2"
+      memory_limit   = "4Gi"
+      max_pods       = 10
     }
     prod = {
-      replica_count    = 3
-      log_level        = "info"
-      cpu_request      = "2"
-      memory_request   = "4Gi"
-      cpu_limit        = "4"
-      memory_limit     = "8Gi"
-      max_pods         = 20
+      replica_count  = 3
+      log_level      = "info"
+      cpu_request    = "2"
+      memory_request = "4Gi"
+      cpu_limit      = "4"
+      memory_limit   = "8Gi"
+      max_pods       = 20
     }
   }[terraform.workspace]
 
@@ -186,7 +186,7 @@ resource "kubernetes_network_policy" "app_netpol" {
       from {
         namespace_selector {
           match_labels = {
-            name = var.namespace
+            name = local.namespace
           }
         }
       }

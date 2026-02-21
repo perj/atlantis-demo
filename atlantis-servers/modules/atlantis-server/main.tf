@@ -62,12 +62,12 @@ resource "kubernetes_role_binding_v1" "atlantis" {
     labels    = local.labels
   }
 
-  # For the demo, just bind the edit cluster role.
+  # For the demo, bind the admin cluster role so Terraform can manage RBAC resources.
   # For a real setup you might want a custom role with fine grained access.
   role_ref {
     api_group = "rbac.authorization.k8s.io"
     kind      = "ClusterRole"
-    name      = "edit"
+    name      = "admin"
   }
 
   subject {

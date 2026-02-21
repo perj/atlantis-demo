@@ -450,6 +450,17 @@ echo ""
 echo "Step 9: Configure approval rules"
 echo "--------------------------------"
 
+# Look up root user ID so we can set them as the required approver.
+# Without eligible approvers, GitLab treats the rule as vacuously satisfied.
+ROOT_USER_ID=$(curl -s -H "PRIVATE-TOKEN: $GITLAB_ROOT_TOKEN" \
+  "$GITLAB_API/users?username=root" | jq -r '.[0].id // empty')
+
+if [ -z "$ROOT_USER_ID" ]; then
+  echo "❌ Failed to retrieve root user ID"
+  exit 1
+fi
+echo "✓ Root user ID: $ROOT_USER_ID"
+
 # Configure System-Alpha approval rules
 echo "Configuring approval rules for system-alpha-infra..."
 
@@ -461,11 +472,12 @@ curl -s -X PUT -H "PRIVATE-TOKEN: $GITLAB_ROOT_TOKEN" \
   -d "only_allow_merge_if_all_discussions_are_resolved=true" \
   -d "only_allow_merge_if_pipeline_succeeds=true" > /dev/null
 
-# Create approval rule
+# Create approval rule requiring root (maintainer) to approve
 curl -s -X POST -H "PRIVATE-TOKEN: $GITLAB_ROOT_TOKEN" \
   "$GITLAB_API/projects/$SYSTEM_ALPHA_PROJECT_ID/approval_rules" \
   -d "name=Maintainer Approval" \
-  -d "approvals_required=1" > /dev/null
+  -d "approvals_required=1" \
+  -d "user_ids[]=$ROOT_USER_ID" > /dev/null
 
 echo "✓ Configured approval rules for system-alpha-infra"
 
@@ -480,11 +492,12 @@ curl -s -X PUT -H "PRIVATE-TOKEN: $GITLAB_ROOT_TOKEN" \
   -d "only_allow_merge_if_all_discussions_are_resolved=true" \
   -d "only_allow_merge_if_pipeline_succeeds=true" > /dev/null
 
-# Create approval rule
+# Create approval rule requiring root (maintainer) to approve
 curl -s -X POST -H "PRIVATE-TOKEN: $GITLAB_ROOT_TOKEN" \
   "$GITLAB_API/projects/$SYSTEM_BETA_PROJECT_ID/approval_rules" \
   -d "name=Maintainer Approval" \
-  -d "approvals_required=1" > /dev/null
+  -d "approvals_required=1" \
+  -d "user_ids[]=$ROOT_USER_ID" > /dev/null
 
 echo "✓ Configured approval rules for system-beta-infra"
 

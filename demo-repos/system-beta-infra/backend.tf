@@ -1,7 +1,7 @@
 terraform {
   backend "s3" {
     bucket = "terraform-states"
-    key    = "system-beta-infra/${terraform.workspace}/terraform.tfstate"
+    key    = "system-beta-infra/terraform.tfstate"
     region = "us-east-1"
 
     endpoints = {

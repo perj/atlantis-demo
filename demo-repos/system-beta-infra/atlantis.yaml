@@ -6,11 +6,11 @@ projects:
     autoplan:
       when_modified: ["*.tf"]
       enabled: true
-    terraform_version: v1.14.x
+    terraform_version: v1.14.0
   - name: prod
     dir: .
     workspace: prod
     autoplan:
       when_modified: ["*.tf"]
       enabled: true
-    terraform_version: v1.14.x
+    terraform_version: v1.14.0
