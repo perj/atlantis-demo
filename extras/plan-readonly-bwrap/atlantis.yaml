@@ -1,0 +1,25 @@
+version: 3
+
+# Example atlantis.yaml for a repo managed by this Atlantis instance.
+#
+# The plan workflow is defined server-side in repos.yaml and cannot be
+# overridden by repos. Projects here just declare dirs and autoplan globs.
+#
+# Adjust dirs and when_modified patterns to match the actual repo layout.
+
+projects:
+  - name: dev
+    dir: dev
+    autoplan:
+      when_modified:
+        - "*.tf"
+        - "../modules/**/*.tf"
+      enabled: true
+
+  - name: prod
+    dir: prod
+    autoplan:
+      when_modified:
+        - "*.tf"
+        - "../modules/**/*.tf"
+      enabled: true
