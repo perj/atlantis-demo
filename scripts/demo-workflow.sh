@@ -211,7 +211,7 @@ EOF
     cat > "$SYSTEM_DIR/backend.tf" << EOF
 terraform {
   backend "s3" {
-    bucket = "terraform-statess"
+    bucket = "terraform-states"
     key    = "atlantis-servers/${SYSTEM_NAME}/terraform.tfstate"
     region = "us-east-1"
 

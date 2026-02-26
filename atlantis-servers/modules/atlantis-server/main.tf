@@ -77,6 +77,46 @@ resource "kubernetes_role_binding_v1" "atlantis" {
   }
 }
 
+# The built-in "admin" ClusterRole excludes resourcequotas and limitranges.
+# This supplemental role grants the permissions needed to manage them.
+resource "kubernetes_role_v1" "atlantis_quota" {
+  for_each = toset(var.target_namespaces)
+
+  metadata {
+    name      = "atlantis-${var.namespace}-${var.instance_name}-quota"
+    namespace = each.value
+    labels    = local.labels
+  }
+
+  rule {
+    api_groups = [""]
+    resources  = ["resourcequotas", "limitranges"]
+    verbs      = ["get", "list", "watch", "create", "update", "patch", "delete"]
+  }
+}
+
+resource "kubernetes_role_binding_v1" "atlantis_quota" {
+  for_each = toset(var.target_namespaces)
+
+  metadata {
+    name      = "atlantis-${var.namespace}-${var.instance_name}-quota"
+    namespace = each.value
+    labels    = local.labels
+  }
+
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role_v1.atlantis_quota[each.value].metadata[0].name
+  }
+
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account_v1.atlantis.metadata[0].name
+    namespace = var.namespace
+  }
+}
+
 # --- Secrets ---
 
 resource "random_password" "webhook_secret" {
@@ -397,6 +437,7 @@ resource "kubernetes_deployment_v1" "atlantis" {
 
   depends_on = [
     kubernetes_role_binding_v1.atlantis,
+    kubernetes_role_binding_v1.atlantis_quota,
   ]
 }
 
