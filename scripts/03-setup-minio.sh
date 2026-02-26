@@ -4,32 +4,32 @@ set -e
 CLUSTER_NAME="atlantis-demo"
 
 verify_context() {
-    log_info "Verifying kubectl context..."
+    echo "Verifying kubectl context..."
 
     CURRENT_CONTEXT=$(kubectl config current-context 2>/dev/null || echo "none")
     EXPECTED_CONTEXT="kind-${CLUSTER_NAME}"
 
     if [ "${CURRENT_CONTEXT}" != "${EXPECTED_CONTEXT}" ]; then
-        log_warning "Current context is '${CURRENT_CONTEXT}', expected '${EXPECTED_CONTEXT}'"
+        echo "Current context is '${CURRENT_CONTEXT}', expected '${EXPECTED_CONTEXT}'"
 
         # Check if the expected context exists
         if kubectl config get-contexts "${EXPECTED_CONTEXT}" &>/dev/null; then
-            log_info "Switching to '${EXPECTED_CONTEXT}' context..."
+            echo "Switching to '${EXPECTED_CONTEXT}' context..."
             kubectl config use-context "${EXPECTED_CONTEXT}"
-            log_success "Context switched to '${EXPECTED_CONTEXT}'"
+            echo "Context switched to '${EXPECTED_CONTEXT}'"
         else
-            log_error "Context '${EXPECTED_CONTEXT}' not found. Did you run 01-setup-kind.sh?"
+            echo "Context '${EXPECTED_CONTEXT}' not found. Did you run 01-setup-kind.sh?"
             log_error "Available contexts:"
             kubectl config get-contexts
             exit 1
         fi
     else
-        log_success "Already using correct context: ${EXPECTED_CONTEXT}"
+        echo "Already using correct context: ${EXPECTED_CONTEXT}"
     fi
 
     # Verify cluster is accessible
     if ! kubectl cluster-info &>/dev/null; then
-        log_error "Cannot access cluster. Is it running?"
+        echo "Cannot access cluster. Is it running?"
         exit 1
     fi
 }

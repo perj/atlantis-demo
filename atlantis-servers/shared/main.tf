@@ -92,7 +92,7 @@ resource "gitlab_personal_access_token" "atlantis_bot" {
   # Automatic token rotation configuration
   # Token will be rotated 7 days before expiry when terraform apply is run
   rotation_configuration = {
-    expiration_days    = 730 # 2 years
+    expiration_days    = 360 # Just under a year, default limit in Gitlab
     rotate_before_days = 7
   }
 }

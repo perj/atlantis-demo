@@ -276,7 +276,7 @@ print_summary() {
     echo "Next steps:"
     echo "  1. Log in to GitLab at ${GITLAB_URL}"
     echo "  2. Verify you can access the admin area"
-    echo "  3. Proceed to Phase 3: ./scripts/03-configure-gitlab.sh"
+    echo "  3. Proceed to Phase 3: ./scripts/03-setup-minio.sh"
     echo ""
 }
 
